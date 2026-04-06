@@ -19,6 +19,18 @@ def make_callback(fmt):
         print(fmt % total, end='')
     return callback
 
+def add_resource(resource, dictionary, keys, is_mdd, encoding, fmt):
+    if is_mdd:
+        if resource.endswith('.db'):
+            d = pack_mdd_db(resource, callback=make_callback(fmt))
+        else:
+            d = pack_mdd_file(resource, callback=make_callback(fmt))
+    else:
+        if resource.endswith('.db'):
+            d = pack_mdx_db(resource, encoding=encoding, callback=make_callback(fmt))
+        else:
+            d = pack_mdx_txt(resource, encoding=encoding, callback=make_callback(fmt), keys=keys)
+    dictionary.extend(d)
 
 def run():
     epilog = ''
@@ -113,17 +125,12 @@ def run():
             for resource in args.add:
                 fmt = '\rScan "%s": %%s' % resource
                 total = 0
-                if is_mdd:
-                    if resource.endswith('.db'):
-                        d = pack_mdd_db(resource, callback=make_callback(fmt))
-                    else:
-                        d = pack_mdd_file(resource, callback=make_callback(fmt))
+                if '*' in resource or '?' in resource or ('[' in resource and ']' in resource):
+                    import glob
+                    for file in glob.glob(resource):
+                        add_resource(file, dictionary, keys, is_mdd, args.encoding, fmt)
                 else:
-                    if resource.endswith('.db'):
-                        d = pack_mdx_db(resource, encoding=args.encoding, callback=make_callback(fmt))
-                    else:
-                        d = pack_mdx_txt(resource, encoding=args.encoding, callback=make_callback(fmt), keys=keys)
-                dictionary.extend(d)
+                    add_resource(resource, dictionary, keys, is_mdd, args.encoding, fmt)
                 print()
             print()
             title = ''
