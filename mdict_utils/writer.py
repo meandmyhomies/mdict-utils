@@ -21,41 +21,40 @@ MDICT_OBJ = {}
 
 
 def get_record_null(mdict_file, key, pos, size, encoding, is_mdd):
-    global MDICT_OBJ
-    if mdict_file not in MDICT_OBJ:
-        if mdict_file.endswith('.db'):
-            conn = sqlite3.connect(mdict_file)
-            MDICT_OBJ[mdict_file] = conn
-        elif is_mdd:
-            pass
-        else:
-            f = open(mdict_file, 'rb')
-            MDICT_OBJ[mdict_file] = f
-    obj = MDICT_OBJ.get(mdict_file)
+    """
+    Read the record content for a given mdict file.
+    This function opens and closes file/DB handles on each call to avoid
+    leaking file descriptors when processing many files.
+    """
     if is_mdd:
         if mdict_file.endswith('.db'):
-            sql = 'SELECT file FROM mdd WHERE rowid=?'
-            c = obj.execute(sql, (pos,))
-            row = c.fetchone()
-            record_null = row[0]
-            return record_null
+            conn = sqlite3.connect(mdict_file)
+            try:
+                c = conn.execute('SELECT file FROM mdd WHERE rowid=?', (pos,))
+                row = c.fetchone()
+                return row[0] if row is not None else b''
+            finally:
+                conn.close()
         else:
-            assert(obj is None), 'MDD file error: %s' % mdict_file
             with open(mdict_file, 'rb') as f:
                 return f.read()
     else:
         if mdict_file.endswith('.db'):
-            sql = 'SELECT paraphrase FROM mdx WHERE rowid=?'
-            c = obj.execute(sql, (pos,))
-            for row in c.fetchall():    # multi entry
-                record_null = (row[0] + '\0').encode(encoding)
-                if len(record_null) == size:
-                    return record_null
+            conn = sqlite3.connect(mdict_file)
+            try:
+                c = conn.execute('SELECT paraphrase FROM mdx WHERE rowid=?', (pos,))
+                for row in c.fetchall():    # multi entry
+                    record_null = (row[0] + '\0').encode(encoding)
+                    if len(record_null) == size:
+                        return record_null
+            finally:
+                conn.close()
         else:
             assert size > 1, key
-            obj.seek(pos)
-            record_null = obj.read(size - 1)
-            return record_null + b'\0'
+            with open(mdict_file, 'rb') as f:
+                f.seek(pos)
+                record_null = f.read(size - 1)
+                return record_null + b'\0'
     return b''
 
 
