@@ -1,3 +1,4 @@
+from html import parser
 import os.path
 import argparse
 import csv
@@ -43,6 +44,9 @@ def run():
 
     group = parser.add_argument_group('Compact HTML')
     group.add_argument('--convert-chtml', action='store_true', help='convert compact html.')
+
+    group = parser.add_argument_group('Performance Tuning')
+    group.add_argument('--hdd-workers', type=int, default=2, help='Max parallel processes to use if an HDD is detected to prevent thrashing (default: 2)')
 
     args = parser.parse_args()
 
@@ -92,6 +96,10 @@ def run():
                 reader.unpack(args.exdir, args.mdict, split=split, convert_chtml=args.convert_chtml)
     elif args.add:
         from .scanner import parallel_scan_and_add
+        from ssd_checker import is_ssd
+        import os
+        import multiprocessing
+
         with ElapsedTimer(verbose=True):
             keys = []
             if args.key_file:
@@ -101,18 +109,35 @@ def run():
                         keys.append(row[0])
             is_mdd = args.mdict.endswith('.mdd')
 
-            # --- START OF NEW PARALLEL CODE ---
             target_files = []
+            is_all_ssd = True
+
             for resource in args.add:
+                # 1. Determine the path to check for SSD status
                 if '*' in resource or '?' in resource or ('[' in resource and ']' in resource):
                     import glob
                     target_files.extend(glob.glob(resource))
+                    # Extract the base directory of the glob to check the drive type
+                    check_path = os.path.dirname(resource) or '.'
                 else:
                     target_files.append(resource)
+                    check_path = resource
 
-            # Dispatches the millions of files to a multiprocessing pool
-            dictionary = parallel_scan_and_add(target_files, keys, is_mdd, args.encoding)
-            # --- END OF NEW PARALLEL CODE ---
+                # 2. Check SSD status ONCE per -a argument using absolute path
+                if not is_ssd(os.path.abspath(check_path)):
+                    is_all_ssd = False
+
+            # 3. Determine the worker limit
+            cpu_cores = multiprocessing.cpu_count()
+            if is_all_ssd:
+                worker_count = cpu_cores
+                print(f"SSD detected. Utilizing all {worker_count} cores for I/O.")
+            else:
+                worker_count = min(args.hdd_workers, cpu_cores)
+                print(f"HDD detected. Capping parallel I/O to {worker_count} workers to prevent disk thrashing.")
+
+            # Pass worker_count down to the parallel scanner
+            dictionary = parallel_scan_and_add(target_files, keys, is_mdd, args.encoding, worker_count)
 
             print()
             title = ''

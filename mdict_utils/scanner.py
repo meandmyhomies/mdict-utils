@@ -51,33 +51,29 @@ def _process_chunk(chunk_args):
 
     return len(targets), local_dict
 
-def parallel_scan_and_add(targets, keys, is_mdd, encoding):
+def parallel_scan_and_add(targets, keys, is_mdd, encoding, worker_count):
     total_targets = len(targets)
     if total_targets == 0:
         return []
 
     print(f"\rDiscovered {total_targets} resource targets. Processing in parallel...", flush=True)
 
-    cpu_cores = multiprocessing.cpu_count()
-
-    # leanhdung1994 paradigm: batch into chunks so we don't choke the Queue
-    chunk_size = max(1, total_targets // (cpu_cores * 4))
+    # Calculate chunk size based on the capped worker count rather than total CPU cores
+    chunk_size = max(1, total_targets // (worker_count * 4))
     chunks = [targets[i:i + chunk_size] for i in range(0, total_targets, chunk_size)]
 
-    # Pack the arguments for the workers
     worker_args = [(chunk, keys, is_mdd, encoding) for chunk in chunks]
 
     final_dictionary = []
 
-    # Try importing tqdm for a nice visual progress bar, fallback to basic percentage otherwise
     try:
         from tqdm import tqdm
         has_tqdm = True
     except ImportError:
         has_tqdm = False
 
-    # Process blocks in parallel and aggregate sequentially
-    with multiprocessing.Pool(processes=cpu_cores) as pool:
+    # Bind the pool to the computed worker_count (capped for HDD, uncapped for SSD)
+    with multiprocessing.Pool(processes=worker_count) as pool:
         if has_tqdm:
             with tqdm(total=total_targets, desc="Scanning", unit="file") as pbar:
                 for processed_count, local_dict in pool.imap_unordered(_process_chunk, worker_args):
@@ -91,6 +87,6 @@ def parallel_scan_and_add(targets, keys, is_mdd, encoding):
                 progress = (processed / total_targets) * 100
                 sys.stdout.write(f"\rScanning files: {progress:.1f}% ({processed}/{total_targets})")
                 sys.stdout.flush()
-            print() # Clear line after completion
+            print()
 
     return final_dictionary
