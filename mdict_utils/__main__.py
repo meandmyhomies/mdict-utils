@@ -7,30 +7,8 @@ from . import reader
 from .writer import pack, pack_mdd_file, pack_mdx_txt, pack_mdx_db, pack_mdd_db, \
     txt2db, db2txt
 from .utils import ElapsedTimer
-
-
-total = 0
-
-
-def make_callback(fmt):
-    def callback(value):
-        global total
-        total += value
-        print(fmt % total, end='')
-    return callback
-
-def add_resource(resource, dictionary, keys, is_mdd, encoding, fmt):
-    if is_mdd:
-        if resource.endswith('.db'):
-            d = pack_mdd_db(resource, callback=make_callback(fmt))
-        else:
-            d = pack_mdd_file(resource, callback=make_callback(fmt))
-    else:
-        if resource.endswith('.db'):
-            d = pack_mdx_db(resource, encoding=encoding, callback=make_callback(fmt))
-        else:
-            d = pack_mdx_txt(resource, encoding=encoding, callback=make_callback(fmt), keys=keys)
-    dictionary.extend(d)
+from .scanner import make_callback, add_resource, parallel_scan_and_add
+import mdict_utils.scanner as scanner_module
 
 def run():
     epilog = ''
@@ -113,6 +91,7 @@ def run():
                     split = None
                 reader.unpack(args.exdir, args.mdict, split=split, convert_chtml=args.convert_chtml)
     elif args.add:
+        from .scanner import parallel_scan_and_add
         with ElapsedTimer(verbose=True):
             keys = []
             if args.key_file:
@@ -121,17 +100,20 @@ def run():
                     for row in csv_reader:
                         keys.append(row[0])
             is_mdd = args.mdict.endswith('.mdd')
-            dictionary = []
+
+            # --- START OF NEW PARALLEL CODE ---
+            target_files = []
             for resource in args.add:
-                fmt = '\rScan "%s": %%s' % resource
-                total = 0
                 if '*' in resource or '?' in resource or ('[' in resource and ']' in resource):
                     import glob
-                    for file in glob.glob(resource):
-                        add_resource(file, dictionary, keys, is_mdd, args.encoding, fmt)
+                    target_files.extend(glob.glob(resource))
                 else:
-                    add_resource(resource, dictionary, keys, is_mdd, args.encoding, fmt)
-                print()
+                    target_files.append(resource)
+
+            # Dispatches the millions of files to a multiprocessing pool
+            dictionary = parallel_scan_and_add(target_files, keys, is_mdd, args.encoding)
+            # --- END OF NEW PARALLEL CODE ---
+
             print()
             title = ''
             description = ''
