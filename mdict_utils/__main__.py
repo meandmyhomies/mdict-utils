@@ -32,6 +32,7 @@ def run():
     group.add_argument('--exdb-zip', action='store_true', help='extract mdx/mdd to DB with ZIP compress')
     group.add_argument('--split-n', metavar='<number>', help='split MDX TXT to N files')
     group.add_argument('--split-az', action='store_true', help='split MDX TXT to files by a...z')
+    group.add_argument('--headwords', action='store_true', help='extract headwords only from mdx file')
 
     group = parser.add_argument_group('Writer')
     group.add_argument('-a', dest='add', metavar='<resource>', action='append', help='add resource file to mdx/mdd file')
@@ -82,17 +83,16 @@ def run():
         with ElapsedTimer(verbose=True):
             record = reader.query(args.mdict, query)
             print(record)
+    elif args.headwords:
+        with ElapsedTimer(verbose=True):
+            split = 'az' if args.split_az else args.split_n
+            reader.unpack_headwords(args.exdir, args.mdict, split=split)
     elif args.extract:
         with ElapsedTimer(verbose=True):
             if args.exdb or args.exdb_zip:
                 reader.unpack_to_db(args.exdir, args.mdict, zip=args.exdb_zip)
             else:
-                if args.split_az:
-                    split = 'az'
-                elif args.split_n:
-                    split = args.split_n
-                else:
-                    split = None
+                split = 'az' if args.split_az else args.split_n
                 reader.unpack(args.exdir, args.mdict, split=split, convert_chtml=args.convert_chtml)
     elif args.add:
         from .scanner import parallel_scan_and_add

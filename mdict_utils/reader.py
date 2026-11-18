@@ -187,6 +187,72 @@ def query(source, word, substyle=False, passcode=None):
     return '\n---\n'.join(record)
 
 
+def _open_split_files(target, basename, suffix, total, split=None):
+    """Open output file(s) for unpack operations, optionally split by a-z or N parts."""
+    out_objs = {}
+    part = total
+    if not split:
+        out_fname = os.path.join(target, basename + suffix)
+        out_objs['all'] = open(out_fname, 'wb')
+    elif split == 'az':
+        import string
+        for c in string.ascii_lowercase:
+            out_fname = os.path.join(target, '%s.%s%s' % (basename, c, suffix))
+            out_objs[c] = open(out_fname, 'wb')
+        out_fname = os.path.join(target, '%s.other%s' % (basename, suffix))
+        out_objs['other'] = open(out_fname, 'wb')
+    elif str(split).isdigit() and int(split) > 0:
+        n_parts = int(split)
+        part = total // n_parts + 1
+        for x in range(n_parts):
+            out_fname = os.path.join(target, '%s.part%02d%s' % (basename, x + 1, suffix))
+            out_objs[x + 1] = open(out_fname, 'wb')
+    else:
+        raise ValueError('split value: %s' % split)
+    return out_objs, part
+
+
+def _select_split_file(out_objs, key, item_count, part, part_count, split=None):
+    """Select the target output file handle for a key and update part_count."""
+    if not split:
+        return out_objs.get('all'), part_count
+    if split == 'az':
+        k = key.decode('UTF-8', errors='replace').lower()
+        first_char = k[0] if k else ''
+        return out_objs.get(first_char, out_objs['other']), part_count
+    if item_count % part == 0:
+        part_count += 1
+    return out_objs.get(part_count), part_count
+
+
+def unpack_headwords(target, source, split=None, substyle=False, passcode=None):
+    """Extract only the headwords (keys) from an MDX file to text file(s)."""
+    if not source.lower().endswith('.mdx'):
+        raise ValueError('Headwords extraction only supports .mdx files: %s' % source)
+    target = target or './'
+    if not os.path.exists(target):
+        os.makedirs(target)
+    mdx = MDX(source, '', substyle, passcode)
+    basename = os.path.basename(source)
+    bar = tqdm(total=len(mdx), unit='rec')
+    out_objs, part = _open_split_files(target, basename, '.headwords.txt', len(mdx), split=split)
+    item_count = 0
+    part_count = 1
+    try:
+        for key in mdx.keys():
+            item_count += 1
+            tf, part_count = _select_split_file(
+                out_objs, key, item_count, part, part_count, split=split
+            )
+            tf.write(key)
+            tf.write(b'\n')
+            bar.update(1)
+    finally:
+        bar.close()
+        for obj in out_objs.values():
+            obj.close()
+
+
 def unpack(target, source, split=None, convert_chtml=False, substyle=False, passcode=None):
     target = target or './'
     if not os.path.exists(target):
@@ -219,57 +285,31 @@ def unpack(target, source, split=None, convert_chtml=False, substyle=False, pass
             f.close()
 
         # content
-        out_objs = {}
-        if not split:       # no split
-            part = len(mdx)
-            out_fname = os.path.join(target, basename + '.txt')
-            tf = open(out_fname, 'wb')
-            out_objs['all'] = tf
-        elif split == 'az':
-            import string
-            for c in string.ascii_lowercase:
-                out_fname = os.path.join(target, '%s.%s.txt' % (basename, c))
-                tf = open(out_fname, 'wb')
-                out_objs[c] = tf
-            out_fname = os.path.join(target, '%s.other.txt' % (basename))
-            tf = open(out_fname, 'wb')
-            out_objs['other'] = tf
-        elif split.isdigit():
-            part = len(mdx) // int(split) + 1
-            for x in range(int(split)):
-                out_fname = os.path.join(target, '%s.part%02d.txt' % (basename, x + 1))
-                tf = open(out_fname, 'wb')
-                out_objs[x + 1] = tf
-        else:
-            raise ValueError('split value: %s' % split)
+        out_objs, part = _open_split_files(target, basename, '.txt', len(mdx), split=split)
         item_count = 0
         part_count = 1
-        for key, value in mdx.items():
-            if not value.strip():
-                bar.write('Skip entry: %s' % key)
-                continue
-            item_count += 1
-            if not split:
-                tf = out_objs.get('all')
-            elif split == 'az':
-                k = key.decode().lower()
-                tf = out_objs.get(k[0], out_objs['other'])
-            elif split.isdigit():
-                if item_count % part == 0:
-                    part_count += 1
-                tf = out_objs.get(part_count)
-            tf.write(key)
-            tf.write(b'\r\n')
-            if convert_chtml and chtml_converter:
-                value = chtml_converter.to_html(value)
-            tf.write(value)
-            if not value.endswith(b'\n'):
+        try:
+            for key, value in mdx.items():
+                if not value.strip():
+                    bar.write('Skip entry: %s' % key)
+                    continue
+                item_count += 1
+                tf, part_count = _select_split_file(
+                    out_objs, key, item_count, part, part_count, split=split
+                )
+                tf.write(key)
                 tf.write(b'\r\n')
-            tf.write(b'</>\r\n')
-            bar.update(1)
-        bar.close()
-        for obj in out_objs.values():
-            obj.close()
+                if convert_chtml and chtml_converter:
+                    value = chtml_converter.to_html(value)
+                tf.write(value)
+                if not value.endswith(b'\n'):
+                    tf.write(b'\r\n')
+                tf.write(b'</>\r\n')
+                bar.update(1)
+        finally:
+            bar.close()
+            for obj in out_objs.values():
+                obj.close()
     elif source.endswith('.mdd'):
         datafolder = os.path.abspath(target)
         if not os.path.exists(datafolder):

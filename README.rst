@@ -95,6 +95,10 @@ Unpack MDX/MDD and split into a...z files::
 
     mdict -x dict.mdx -d ./mdx --split-az
 
+Extract headwords only from MDX::
+
+    mdict --headwords dict.mdx -d ./mdx
+
 Unpack MDD::
 
     mdict -x dict.mdd -d ./mdd
